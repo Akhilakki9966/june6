@@ -11,10 +11,5 @@ pipeline {
                 sh 'javac Months.java'
             }
         }
-                stage ('run') {
-                    steps {
-                        sh 'java Months'
-                    }
-                }
     }
 }
