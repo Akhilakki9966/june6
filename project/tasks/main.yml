@@ -1,0 +1,123 @@
+---
+- name: Install required packages
+      yum:
+        name:
+          - java-17-amazon-corretto-devel
+          - wget
+          - tar
+        state: present
+
+    - name: Create Tomcat installation directory
+      file:
+        path: "{{ tomcat_install_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Apache Tomcat
+      get_url:
+        url: "{{ tomcat_tarball_url }}"
+        dest: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+
+    - name: Extract Apache Tomcat
+      unarchive:
+        src: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: "{{ tomcat_install_dir }}"
+        remote_src: yes
+        creates: "{{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+
+    - name: Create symbolic link to the latest Tomcat
+      file:
+        src: "{{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+        dest: "{{ tomcat_symlink }}"
+        state: link
+        force: yes
+
+    - name: Create Tomcat group
+      group:
+        name: tomcat
+
+    - name: Create Tomcat user
+      user:
+        name: tomcat
+        group: tomcat
+        home: "{{ tomcat_symlink }}"
+        shell: /bin/false
+
+    - name: Change ownership of Tomcat directory
+      file:
+        path: "{{ tomcat_symlink }}"
+        state: directory
+        recurse: yes
+        owner: tomcat
+        group: tomcat
+
+    - name: Create systemd service for Tomcat
+      copy:
+        dest: /etc/systemd/system/tomcat.service
+        content: |
+          [Unit]
+          Description=Apache Tomcat Web Application Container
+          After=network.target
+
+          [Service]
+          Type=forking
+
+          Environment=JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
+          Environment=CATALINA_PID={{ tomcat_symlink }}/temp/tomcat.pid
+          Environment=CATALINA_HOME={{ tomcat_symlink }}
+          Environment=CATALINA_BASE={{ tomcat_symlink }}
+          Environment='CATALINA_OPTS=-Xms512M -Xmx1024M -server -XX:+UseParallelGC'
+          Environment='JAVA_OPTS=-Djava.awt.headless=true -Djava.security.egd=file:/dev/./urandom'
+
+          ExecStart={{ tomcat_symlink }}/bin/startup.sh
+          ExecStop={{ tomcat_symlink }}/bin/shutdown.sh
+
+          User=tomcat
+          Group=tomcat
+          UMask=0007
+          RestartSec=10
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Tomcat service
+      systemd:
+        name: tomcat
+        enabled: yes
+        state: started
+
+    - name: Configure Tomcat users
+      copy:
+        dest: "{{ tomcat_symlink }}/conf/tomcat-users.xml"
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <tomcat-users>
+              <role rolename="manager-gui"/>
+              <role rolename="manager-script"/>
+              <role rolename="manager-jmx"/>
+              <role rolename="manager-status"/>
+              <user username="admin" password="admin" roles="manager-gui,manager-script,manager-jmx,manager-status"/>
+          </tomcat-users>
+
+    - name: Allow remote access to Tomcat manager
+      copy:
+        dest: "{{ tomcat_symlink }}/webapps/manager/META-INF/context.xml"
+        content: |
+          <Context antiResourceLocking="false" privileged="true">
+            <Valve className="org.apache.catalina.valves.RemoteAddrValve"
+                   allow=".*" />
+          </Context>
+
+    - name: Allow remote access to Tomcat host-manager
+      copy:
+        dest: "{{ tomcat_symlink }}/webapps/host-manager/META-INF/context.xml"
+        content: |
+          <Context antiResourceLocking="false" privileged="true">
+            <Valve className="org.apache.catalina.valves.RemoteAddrValve"
+                   allow=".*" />
+
